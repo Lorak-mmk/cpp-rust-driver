@@ -2,6 +2,7 @@ use crate::types::size_t;
 use std::cmp::min;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::rc::Rc;
 use std::sync::Arc;
 
 pub unsafe fn ptr_to_ref<T>(ptr: *const T) -> &'static T {
@@ -73,3 +74,84 @@ pub unsafe fn strlen(ptr: *const c_char) -> size_t {
     }
     libc::strlen(ptr) as size_t
 }
+
+pub trait ExternalBox {}
+pub trait ExternalArc {}
+pub trait ExternalRc {}
+pub trait ExternalRef {}
+
+pub trait BoxFFI {
+    fn into_ptr(self: Box<Self>) -> *mut Self {
+        Box::into_raw(self)
+    }
+    unsafe fn from_ptr(ptr: *mut Self) -> Box<Self> {
+        Box::from_raw(ptr)
+    }
+    unsafe fn as_ref<'a>(ptr: *const Self) -> &'a Self {
+        ptr.as_ref().unwrap()
+    }
+    unsafe fn as_mut_ref<'a>(ptr: *mut Self) -> &'a mut Self {
+        ptr.as_mut().unwrap()
+    }
+    unsafe fn free(ptr: *mut Self) {
+        std::mem::drop(BoxFFI::from_ptr(ptr));
+    }
+}
+
+pub trait ArcFFI {
+    fn as_ptr(self: &Arc<Self>) -> *const Self {
+        Arc::as_ptr(self)
+    }
+    fn into_ptr(self: Arc<Self>) -> *const Self {
+        Arc::into_raw(self)
+    }
+    unsafe fn from_ptr(ptr: *const Self) -> Arc<Self> {
+        Arc::from_raw(ptr)
+    }
+    unsafe fn cloned_from_ptr(ptr: *const Self) -> Arc<Self> {
+        Arc::increment_strong_count(ptr);
+        Arc::from_raw(ptr)
+    }
+    unsafe fn as_ref<'a>(ptr: *const Self) -> &'a Self {
+        ptr.as_ref().unwrap()
+    }
+    unsafe fn free(ptr: *const Self) {
+        std::mem::drop(ArcFFI::from_ptr(ptr));
+    }
+}
+
+pub trait RcFFI {
+    fn into_ptr(self: Rc<Self>) -> *const Self {
+        Rc::into_raw(self)
+    }
+    unsafe fn from_ptr(ptr: *const Self) -> Rc<Self> {
+        Rc::from_raw(ptr)
+    }
+    unsafe fn cloned_from_ptr(ptr: *const Self) -> Rc<Self> {
+        Rc::increment_strong_count(ptr);
+        Rc::from_raw(ptr)
+    }
+    unsafe fn as_ref<'a>(ptr: *const Self) -> &'a Self {
+        ptr.as_ref().unwrap()
+    }
+    unsafe fn free(ptr: *const Self) {
+        std::mem::drop(RcFFI::from_ptr(ptr));
+    }
+}
+
+pub trait RefFFI {
+    unsafe fn as_ref<'a>(ptr: *const Self) -> &'a Self {
+        ptr.as_ref().unwrap()
+    }
+    unsafe fn as_mut_ref<'a>(ptr: *mut Self) -> &'a mut Self {
+        ptr.as_mut().unwrap()
+    }
+}
+
+impl<T: ExternalBox> BoxFFI for T {}
+
+impl<T: ExternalArc> ArcFFI for T {}
+
+impl<T: ExternalRc> RcFFI for T {}
+
+impl<T: ExternalRef> RefFFI for T {}
