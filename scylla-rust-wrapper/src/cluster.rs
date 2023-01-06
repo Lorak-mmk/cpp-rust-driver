@@ -465,7 +465,7 @@ pub unsafe extern "C" fn cass_cluster_set_retry_policy(
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_ssl(cluster: *mut CassCluster, ssl: *mut CassSsl) {
     let cluster_from_raw = BoxFFI::as_mut_ref(cluster);
-    let cass_ssl = ArcFFI::cloned_from_ptr(ssl);
+    let cass_ssl = BoxFFI::as_ref(ssl);
 
     let ssl_context_builder = SslContextBuilder::from_ptr(cass_ssl.ssl_context);
     // Reference count is increased as tokio_openssl will try to free `ssl_context` when calling `SSL_free`.
