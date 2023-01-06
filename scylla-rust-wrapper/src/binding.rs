@@ -68,7 +68,7 @@ macro_rules! make_index_binder {
             #[allow(unused_imports)]
             use scylla::frame::response::result::CqlValue::*;
             match ($e)($($arg), *) {
-                Ok(v) => $consume_v(ptr_to_ref_mut(this), index as usize, v),
+                Ok(v) => $consume_v(BoxFFI::as_mut_ref(this), index as usize, v),
                 Err(e) => e,
             }
         }
@@ -89,7 +89,7 @@ macro_rules! make_name_binder {
             use scylla::frame::response::result::CqlValue::*;
             let name = ptr_to_cstr(name).unwrap();
             match ($e)($($arg), *) {
-                Ok(v) => $consume_v(ptr_to_ref_mut(this), name, v),
+                Ok(v) => $consume_v(BoxFFI::as_mut_ref(this), name, v),
                 Err(e) => e,
             }
         }
@@ -111,7 +111,7 @@ macro_rules! make_name_n_binder {
             use scylla::frame::response::result::CqlValue::*;
             let name = ptr_to_cstr_n(name, name_length).unwrap();
             match ($e)($($arg), *) {
-                Ok(v) => $consume_v(ptr_to_ref_mut(this), name, v),
+                Ok(v) => $consume_v(BoxFFI::as_mut_ref(this), name, v),
                 Err(e) => e,
             }
         }
@@ -130,7 +130,7 @@ macro_rules! make_appender {
             #[allow(unused_imports)]
             use scylla::frame::response::result::CqlValue::*;
             match ($e)($($arg), *) {
-                Ok(v) => $consume_v(ptr_to_ref_mut(this), v),
+                Ok(v) => $consume_v(BoxFFI::as_mut_ref(this), v),
                 Err(e) => e,
             }
         }
@@ -281,7 +281,7 @@ macro_rules! invoke_binder_maker_macro_with_type {
             $consume_v,
             $fn,
             |p: *const crate::collection::CassCollection| {
-                match std::convert::TryInto::try_into(ptr_to_ref(p)) {
+                match std::convert::TryInto::try_into(BoxFFI::as_ref(p)) {
                     Ok(v) => Ok(Some(v)),
                     Err(_) => Err(CassError::CASS_ERROR_LIB_INVALID_VALUE_TYPE),
                 }
@@ -295,7 +295,7 @@ macro_rules! invoke_binder_maker_macro_with_type {
             $consume_v,
             $fn,
             |p: *const crate::tuple::CassTuple| {
-                std::convert::TryInto::try_into(ptr_to_ref(p)).map(Some)
+                std::convert::TryInto::try_into(BoxFFI::as_ref(p)).map(Some)
             },
             [p @ *const crate::tuple::CassTuple]
         );
@@ -305,7 +305,7 @@ macro_rules! invoke_binder_maker_macro_with_type {
             $this,
             $consume_v,
             $fn,
-            |p: *const crate::user_type::CassUserType| Ok(Some(ptr_to_ref(p).into())),
+            |p: *const crate::user_type::CassUserType| Ok(Some(BoxFFI::as_ref(p).into())),
             [p @ *const crate::user_type::CassUserType]
         );
     };

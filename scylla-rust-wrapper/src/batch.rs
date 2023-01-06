@@ -1,4 +1,4 @@
-use crate::argconv::{free_boxed, ptr_to_ref, ptr_to_ref_mut};
+use crate::argconv::BoxFFI;
 use crate::cass_error::CassError;
 use crate::cass_types::CassConsistency;
 use crate::cass_types::{make_batch_type, CassBatchType};
@@ -15,6 +15,8 @@ pub struct CassBatch {
     pub batch_request_timeout_ms: Option<cass_uint64_t>,
 }
 
+impl BoxFFI for CassBatch {}
+
 #[derive(Clone)]
 pub struct CassBatchState {
     pub batch: Batch,
@@ -24,7 +26,7 @@ pub struct CassBatchState {
 #[no_mangle]
 pub unsafe extern "C" fn cass_batch_new(type_: CassBatchType) -> *mut CassBatch {
     if let Some(batch_type) = make_batch_type(type_) {
-        Box::into_raw(Box::new(CassBatch {
+        BoxFFI::into_ptr(Box::new(CassBatch {
             state: Arc::new(CassBatchState {
                 batch: Batch::new(batch_type),
                 bound_values: Vec::new(),
@@ -38,7 +40,7 @@ pub unsafe extern "C" fn cass_batch_new(type_: CassBatchType) -> *mut CassBatch 
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_batch_free(batch: *mut CassBatch) {
-    free_boxed(batch)
+    BoxFFI::free(batch);
 }
 
 #[no_mangle]
@@ -46,7 +48,7 @@ pub unsafe extern "C" fn cass_batch_set_consistency(
     batch: *mut CassBatch,
     consistency: CassConsistency,
 ) -> CassError {
-    let batch = ptr_to_ref_mut(batch);
+    let batch = BoxFFI::as_mut_ref(batch);
     let consistency = match consistency.try_into().ok() {
         Some(c) => c,
         None => return CassError::CASS_ERROR_LIB_BAD_PARAMS,
@@ -63,7 +65,7 @@ pub unsafe extern "C" fn cass_batch_set_serial_consistency(
     batch: *mut CassBatch,
     serial_consistency: CassConsistency,
 ) -> CassError {
-    let batch = ptr_to_ref_mut(batch);
+    let batch = BoxFFI::as_mut_ref(batch);
     let serial_consistency = match serial_consistency.try_into().ok() {
         Some(c) => c,
         None => return CassError::CASS_ERROR_LIB_BAD_PARAMS,
@@ -80,7 +82,7 @@ pub unsafe extern "C" fn cass_batch_set_timestamp(
     batch: *mut CassBatch,
     timestamp: cass_int64_t,
 ) -> CassError {
-    let batch = ptr_to_ref_mut(batch);
+    let batch = BoxFFI::as_mut_ref(batch);
 
     Arc::make_mut(&mut batch.state)
         .batch
@@ -94,7 +96,7 @@ pub unsafe extern "C" fn cass_batch_set_request_timeout(
     batch: *mut CassBatch,
     timeout_ms: cass_uint64_t,
 ) -> CassError {
-    let batch = ptr_to_ref_mut(batch);
+    let batch = BoxFFI::as_mut_ref(batch);
     batch.batch_request_timeout_ms = Some(timeout_ms);
 
     CassError::CASS_OK
@@ -105,7 +107,7 @@ pub unsafe extern "C" fn cass_batch_set_is_idempotent(
     batch: *mut CassBatch,
     is_idempotent: cass_bool_t,
 ) -> CassError {
-    let batch = ptr_to_ref_mut(batch);
+    let batch = BoxFFI::as_mut_ref(batch);
     Arc::make_mut(&mut batch.state)
         .batch
         .set_is_idempotent(is_idempotent != 0);
@@ -118,7 +120,7 @@ pub unsafe extern "C" fn cass_batch_set_tracing(
     batch: *mut CassBatch,
     enabled: cass_bool_t,
 ) -> CassError {
-    let batch = ptr_to_ref_mut(batch);
+    let batch = BoxFFI::as_mut_ref(batch);
     Arc::make_mut(&mut batch.state)
         .batch
         .set_tracing(enabled != 0);
@@ -131,9 +133,9 @@ pub unsafe extern "C" fn cass_batch_add_statement(
     batch: *mut CassBatch,
     statement: *const CassStatement,
 ) -> CassError {
-    let batch = ptr_to_ref_mut(batch);
+    let batch = BoxFFI::as_mut_ref(batch);
     let state = Arc::make_mut(&mut batch.state);
-    let statement = ptr_to_ref(statement);
+    let statement = BoxFFI::as_ref(statement);
 
     match &statement.statement {
         Statement::Simple(q) => state.batch.append_statement(q.query.clone()),
