@@ -104,6 +104,8 @@ pub enum CassDataTypeInner {
 #[repr(transparent)]
 pub struct CassDataType(UnsafeCell<CassDataTypeInner>);
 
+impl ArcFFI for CassDataType {}
+
 unsafe impl Sync for CassDataType {}
 
 impl CassDataType {
@@ -329,7 +331,7 @@ pub fn get_column_type(column_type: &ColumnType) -> CassDataType {
     CassDataType::new(inner)
 }
 
-// Changed return type to const ptr - Arc::into_raw is const.
+// Changed return type to const ptr - ArcFFI::into_ptr is const.
 // It's probably not a good idea - but cppdriver doesn't guarantee
 // thread safety apart from CassSession and CassFuture.
 // This comment also applies to other functions that create CassDataType.
@@ -346,39 +348,39 @@ pub unsafe extern "C" fn cass_data_type_new(value_type: CassValueType) -> *const
         t if t < CassValueType::CASS_VALUE_TYPE_LAST_ENTRY => CassDataTypeInner::Value(t),
         _ => return ptr::null_mut(),
     };
-    Arc::into_raw(CassDataType::new_alloc(inner))
+    ArcFFI::into_ptr(CassDataType::new_alloc(inner))
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_data_type_new_from_existing(
     data_type: *const CassDataType,
 ) -> *const CassDataType {
-    let data_type = ptr_to_ref(data_type);
-    Arc::into_raw(CassDataType::new_alloc(data_type.get_unchecked().clone()))
+    let data_type = ArcFFI::as_ref(data_type);
+    ArcFFI::into_ptr(CassDataType::new_alloc(data_type.get_unchecked().clone()))
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_data_type_new_tuple(item_count: size_t) -> *const CassDataType {
-    Arc::into_raw(CassDataType::new_alloc(CassDataTypeInner::Tuple(
+    ArcFFI::into_ptr(CassDataType::new_alloc(CassDataTypeInner::Tuple(
         Vec::with_capacity(item_count as usize),
     )))
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_data_type_new_udt(field_count: size_t) -> *const CassDataType {
-    Arc::into_raw(CassDataType::new_alloc(CassDataTypeInner::UDT(
+    ArcFFI::into_ptr(CassDataType::new_alloc(CassDataTypeInner::UDT(
         UDTDataType::with_capacity(field_count as usize),
     )))
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_data_type_free(data_type: *mut CassDataType) {
-    free_arced(data_type);
+    ArcFFI::free(data_type);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_data_type_type(data_type: *const CassDataType) -> CassValueType {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     data_type.get_unchecked().get_value_type()
 }
 
@@ -391,7 +393,7 @@ pub unsafe extern "C" fn cass_data_type_type_name(
     type_name: *mut *const c_char,
     type_name_length: *mut size_t,
 ) -> CassError {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     match data_type.get_unchecked() {
         CassDataTypeInner::UDT(UDTDataType { name, .. }) => {
             write_str_to_c(name, type_name, type_name_length);
@@ -415,7 +417,7 @@ pub unsafe extern "C" fn cass_data_type_set_type_name_n(
     type_name: *const c_char,
     type_name_length: size_t,
 ) -> CassError {
-    let data_type = ptr_to_ref(data_type_raw);
+    let data_type = ArcFFI::as_ref(data_type_raw);
     let type_name_string = ptr_to_cstr_n(type_name, type_name_length)
         .unwrap()
         .to_string();
@@ -435,7 +437,7 @@ pub unsafe extern "C" fn cass_data_type_keyspace(
     keyspace: *mut *const c_char,
     keyspace_length: *mut size_t,
 ) -> CassError {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     match data_type.get_unchecked() {
         CassDataTypeInner::UDT(UDTDataType { name, .. }) => {
             write_str_to_c(name, keyspace, keyspace_length);
@@ -459,7 +461,7 @@ pub unsafe extern "C" fn cass_data_type_set_keyspace_n(
     keyspace: *const c_char,
     keyspace_length: size_t,
 ) -> CassError {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     let keyspace_string = ptr_to_cstr_n(keyspace, keyspace_length)
         .unwrap()
         .to_string();
@@ -479,7 +481,7 @@ pub unsafe extern "C" fn cass_data_type_class_name(
     class_name: *mut *const ::std::os::raw::c_char,
     class_name_length: *mut size_t,
 ) -> CassError {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     match data_type.get_unchecked() {
         CassDataTypeInner::Custom(name) => {
             write_str_to_c(name, class_name, class_name_length);
@@ -503,7 +505,7 @@ pub unsafe extern "C" fn cass_data_type_set_class_name_n(
     class_name: *const ::std::os::raw::c_char,
     class_name_length: size_t,
 ) -> CassError {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     let class_string = ptr_to_cstr_n(class_name, class_name_length)
         .unwrap()
         .to_string();
@@ -518,7 +520,7 @@ pub unsafe extern "C" fn cass_data_type_set_class_name_n(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_data_type_sub_type_count(data_type: *const CassDataType) -> size_t {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     match data_type.get_unchecked() {
         CassDataTypeInner::Value(..) => 0,
         CassDataTypeInner::UDT(udt_data_type) => udt_data_type.field_types.len() as size_t,
@@ -539,14 +541,14 @@ pub unsafe extern "C" fn cass_data_type_sub_data_type(
     data_type: *const CassDataType,
     index: size_t,
 ) -> *const CassDataType {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     let sub_type: Option<&Arc<CassDataType>> =
         data_type.get_unchecked().get_sub_data_type(index as usize);
 
     match sub_type {
         None => std::ptr::null(),
         // Semantic from cppdriver which also returns non-owning pointer
-        Some(arc) => Arc::as_ptr(arc),
+        Some(arc) => ArcFFI::as_ptr(arc),
     }
 }
 
@@ -564,12 +566,12 @@ pub unsafe extern "C" fn cass_data_type_sub_data_type_by_name_n(
     name: *const ::std::os::raw::c_char,
     name_length: size_t,
 ) -> *const CassDataType {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     let name_str = ptr_to_cstr_n(name, name_length).unwrap();
     match data_type.get_unchecked() {
         CassDataTypeInner::UDT(udt) => match udt.get_field_by_name(name_str) {
             None => std::ptr::null(),
-            Some(t) => Arc::as_ptr(t),
+            Some(t) => ArcFFI::as_ptr(t),
         },
         _ => std::ptr::null(),
     }
@@ -582,7 +584,7 @@ pub unsafe extern "C" fn cass_data_type_sub_type_name(
     name: *mut *const ::std::os::raw::c_char,
     name_length: *mut size_t,
 ) -> CassError {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     match data_type.get_unchecked() {
         CassDataTypeInner::UDT(udt) => match udt.field_types.get(index as usize) {
             None => CassError::CASS_ERROR_LIB_INDEX_OUT_OF_BOUNDS,
@@ -600,10 +602,10 @@ pub unsafe extern "C" fn cass_data_type_add_sub_type(
     data_type: *const CassDataType,
     sub_data_type: *const CassDataType,
 ) -> CassError {
-    let data_type = ptr_to_ref(data_type);
+    let data_type = ArcFFI::as_ref(data_type);
     match data_type
         .get_mut_unchecked()
-        .add_sub_data_type(clone_arced(sub_data_type))
+        .add_sub_data_type(ArcFFI::cloned_from_ptr(sub_data_type))
     {
         Ok(()) => CassError::CASS_OK,
         Err(e) => e,
@@ -627,9 +629,9 @@ pub unsafe extern "C" fn cass_data_type_add_sub_type_by_name_n(
     sub_data_type_raw: *const CassDataType,
 ) -> CassError {
     let name_string = ptr_to_cstr_n(name, name_length).unwrap().to_string();
-    let sub_data_type = clone_arced(sub_data_type_raw);
+    let sub_data_type = ArcFFI::cloned_from_ptr(sub_data_type_raw);
 
-    let data_type = ptr_to_ref(data_type_raw);
+    let data_type = ArcFFI::as_ref(data_type_raw);
     match data_type.get_mut_unchecked() {
         CassDataTypeInner::UDT(udt_data_type) => {
             // The Cpp Driver does not check whether field_types size
@@ -647,7 +649,7 @@ pub unsafe extern "C" fn cass_data_type_add_sub_value_type(
     sub_value_type: CassValueType,
 ) -> CassError {
     let sub_data_type = CassDataType::new_alloc(CassDataTypeInner::Value(sub_value_type));
-    cass_data_type_add_sub_type(data_type, Arc::as_ptr(&sub_data_type))
+    cass_data_type_add_sub_type(data_type, ArcFFI::as_ptr(&sub_data_type))
 }
 
 #[no_mangle]
@@ -657,7 +659,7 @@ pub unsafe extern "C" fn cass_data_type_add_sub_value_type_by_name(
     sub_value_type: CassValueType,
 ) -> CassError {
     let sub_data_type = CassDataType::new_alloc(CassDataTypeInner::Value(sub_value_type));
-    cass_data_type_add_sub_type_by_name(data_type, name, Arc::as_ptr(&sub_data_type))
+    cass_data_type_add_sub_type_by_name(data_type, name, ArcFFI::as_ptr(&sub_data_type))
 }
 
 #[no_mangle]
@@ -668,7 +670,12 @@ pub unsafe extern "C" fn cass_data_type_add_sub_value_type_by_name_n(
     sub_value_type: CassValueType,
 ) -> CassError {
     let sub_data_type = CassDataType::new_alloc(CassDataTypeInner::Value(sub_value_type));
-    cass_data_type_add_sub_type_by_name_n(data_type, name, name_length, Arc::as_ptr(&sub_data_type))
+    cass_data_type_add_sub_type_by_name_n(
+        data_type,
+        name,
+        name_length,
+        ArcFFI::as_ptr(&sub_data_type),
+    )
 }
 
 impl TryFrom<CassConsistency> for Consistency {

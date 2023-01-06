@@ -10,6 +10,8 @@ include!(concat!(env!("OUT_DIR"), "/cppdriver_data_query_error.rs"));
 
 pub type CassErrorResult = QueryError;
 
+impl ArcFFI for CassErrorResult {}
+
 impl From<Consistency> for CassConsistency {
     fn from(c: Consistency) -> CassConsistency {
         match c {
@@ -44,12 +46,12 @@ impl From<&WriteType> for CassWriteType {
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_error_result_free(error_result: *const CassErrorResult) {
-    free_arced(error_result);
+    ArcFFI::free(error_result);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_error_result_code(error_result: *const CassErrorResult) -> CassError {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     CassError::from(error_result)
 }
 
@@ -57,7 +59,7 @@ pub unsafe extern "C" fn cass_error_result_code(error_result: *const CassErrorRe
 pub unsafe extern "C" fn cass_error_result_consistency(
     error_result: *const CassErrorResult,
 ) -> CassConsistency {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::Unavailable { consistency, .. }, _) => {
             get_cass_consistency_from_legacy(consistency)
@@ -92,7 +94,7 @@ fn get_cass_consistency_from_legacy(consistency: &LegacyConsistency) -> CassCons
 pub unsafe extern "C" fn cass_error_result_responses_received(
     error_result: *const CassErrorResult,
 ) -> cass_int32_t {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::Unavailable { alive, .. }, _) => *alive,
         QueryError::DbError(DbError::ReadTimeout { received, .. }, _) => *received,
@@ -107,7 +109,7 @@ pub unsafe extern "C" fn cass_error_result_responses_received(
 pub unsafe extern "C" fn cass_error_result_responses_required(
     error_result: *const CassErrorResult,
 ) -> cass_int32_t {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::Unavailable { required, .. }, _) => *required,
         QueryError::DbError(DbError::ReadTimeout { required, .. }, _) => *required,
@@ -122,7 +124,7 @@ pub unsafe extern "C" fn cass_error_result_responses_required(
 pub unsafe extern "C" fn cass_error_result_num_failures(
     error_result: *const CassErrorResult,
 ) -> cass_int32_t {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::ReadFailure { numfailures, .. }, _) => *numfailures,
         QueryError::DbError(DbError::WriteFailure { numfailures, .. }, _) => *numfailures,
@@ -134,7 +136,7 @@ pub unsafe extern "C" fn cass_error_result_num_failures(
 pub unsafe extern "C" fn cass_error_result_data_present(
     error_result: *const CassErrorResult,
 ) -> cass_bool_t {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::ReadTimeout { data_present, .. }, _) => {
             if *data_present {
@@ -158,7 +160,7 @@ pub unsafe extern "C" fn cass_error_result_data_present(
 pub unsafe extern "C" fn cass_error_result_write_type(
     error_result: *const CassErrorResult,
 ) -> CassWriteType {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::WriteTimeout { write_type, .. }, _) => {
             CassWriteType::from(write_type)
@@ -176,7 +178,7 @@ pub unsafe extern "C" fn cass_error_result_keyspace(
     c_keyspace: *mut *const ::std::os::raw::c_char,
     c_keyspace_len: *mut size_t,
 ) -> CassError {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::AlreadyExists { keyspace, .. }, _) => {
             write_str_to_c(keyspace.as_str(), c_keyspace, c_keyspace_len);
@@ -196,7 +198,7 @@ pub unsafe extern "C" fn cass_error_result_table(
     c_table: *mut *const ::std::os::raw::c_char,
     c_table_len: *mut size_t,
 ) -> CassError {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::AlreadyExists { table, .. }, _) => {
             write_str_to_c(table.as_str(), c_table, c_table_len);
@@ -212,7 +214,7 @@ pub unsafe extern "C" fn cass_error_result_function(
     c_function: *mut *const ::std::os::raw::c_char,
     c_function_len: *mut size_t,
 ) -> CassError {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::FunctionFailure { function, .. }, _) => {
             write_str_to_c(function.as_str(), c_function, c_function_len);
@@ -224,7 +226,7 @@ pub unsafe extern "C" fn cass_error_result_function(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_error_num_arg_types(error_result: *const CassErrorResult) -> size_t {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::FunctionFailure { arg_types, .. }, _) => {
             arg_types.len() as size_t
@@ -240,7 +242,7 @@ pub unsafe extern "C" fn cass_error_result_arg_type(
     arg_type: *mut *const ::std::os::raw::c_char,
     arg_type_length: *mut size_t,
 ) -> CassError {
-    let error_result: &CassErrorResult = ptr_to_ref(error_result);
+    let error_result: &CassErrorResult = ArcFFI::as_ref(error_result);
     match error_result {
         QueryError::DbError(DbError::FunctionFailure { arg_types, .. }, _) => {
             if index >= arg_types.len() as size_t {

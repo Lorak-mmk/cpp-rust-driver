@@ -38,6 +38,8 @@ pub struct CassStatement {
     pub request_timeout_ms: Option<cass_uint64_t>,
 }
 
+impl BoxFFI for CassStatement {}
+
 impl CassStatement {
     fn bind_cql_value(&mut self, index: usize, value: Option<CqlValue>) -> CassError {
         if index >= self.bound_values.len() {
@@ -153,7 +155,7 @@ pub unsafe extern "C" fn cass_statement_new_n(
         name_to_bound_index: HashMap::with_capacity(parameter_count as usize),
     };
 
-    Box::into_raw(Box::new(CassStatement {
+    BoxFFI::into_ptr(Box::new(CassStatement {
         statement: Statement::Simple(simple_query),
         bound_values: vec![Unset; parameter_count as usize],
         paging_state: None,
@@ -163,7 +165,7 @@ pub unsafe extern "C" fn cass_statement_new_n(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_statement_free(statement_raw: *mut CassStatement) {
-    free_boxed(statement_raw);
+    BoxFFI::free(statement_raw);
 }
 
 #[no_mangle]
@@ -174,7 +176,7 @@ pub unsafe extern "C" fn cass_statement_set_consistency(
     let consistency_opt = get_consistency_from_cass_consistency(consistency);
 
     if let Some(Regular(regular_consistency)) = consistency_opt {
-        match &mut ptr_to_ref_mut(statement).statement {
+        match &mut BoxFFI::as_mut_ref(statement).statement {
             Statement::Simple(inner) => inner.query.set_consistency(regular_consistency),
             Statement::Prepared(inner) => Arc::make_mut(inner).set_consistency(regular_consistency),
         }
@@ -189,7 +191,7 @@ pub unsafe extern "C" fn cass_statement_set_paging_size(
     page_size: c_int,
 ) -> CassError {
     // TODO: validate page_size
-    match &mut ptr_to_ref_mut(statement_raw).statement {
+    match &mut BoxFFI::as_mut_ref(statement_raw).statement {
         Statement::Simple(inner) => {
             if page_size == -1 {
                 inner.query.disable_paging()
@@ -214,8 +216,8 @@ pub unsafe extern "C" fn cass_statement_set_paging_state(
     statement: *mut CassStatement,
     result: *const CassResult,
 ) -> CassError {
-    let statement = ptr_to_ref_mut(statement);
-    let result = ptr_to_ref(result);
+    let statement = BoxFFI::as_mut_ref(statement);
+    let result = ArcFFI::as_ref(result);
 
     statement.paging_state = result.metadata.paging_state.clone();
     CassError::CASS_OK
@@ -226,7 +228,7 @@ pub unsafe extern "C" fn cass_statement_set_is_idempotent(
     statement_raw: *mut CassStatement,
     is_idempotent: cass_bool_t,
 ) -> CassError {
-    match &mut ptr_to_ref_mut(statement_raw).statement {
+    match &mut BoxFFI::as_mut_ref(statement_raw).statement {
         Statement::Simple(inner) => inner.query.set_is_idempotent(is_idempotent != 0),
         Statement::Prepared(inner) => Arc::make_mut(inner).set_is_idempotent(is_idempotent != 0),
     }
@@ -239,7 +241,7 @@ pub unsafe extern "C" fn cass_statement_set_tracing(
     statement_raw: *mut CassStatement,
     enabled: cass_bool_t,
 ) -> CassError {
-    match &mut ptr_to_ref_mut(statement_raw).statement {
+    match &mut BoxFFI::as_mut_ref(statement_raw).statement {
         Statement::Simple(inner) => inner.query.set_tracing(enabled != 0),
         Statement::Prepared(inner) => Arc::make_mut(inner).set_tracing(enabled != 0),
     }
@@ -253,14 +255,14 @@ pub unsafe extern "C" fn cass_statement_set_retry_policy(
     retry_policy: *const CassRetryPolicy,
 ) -> CassError {
     let retry_policy_from_raw: &dyn scylla::retry_policy::RetryPolicy =
-        match ptr_to_ref(retry_policy) {
+        match ArcFFI::as_ref(retry_policy) {
             CassRetryPolicy::DefaultRetryPolicy(default) => default,
             CassRetryPolicy::FallthroughRetryPolicy(fallthrough) => fallthrough,
             CassRetryPolicy::DowngradingConsistencyRetryPolicy(downgrading) => downgrading,
         };
     let boxed_retry_policy = retry_policy_from_raw.clone_boxed();
 
-    match &mut ptr_to_ref_mut(statement).statement {
+    match &mut BoxFFI::as_mut_ref(statement).statement {
         Statement::Simple(inner) => inner.query.set_retry_policy(boxed_retry_policy),
         Statement::Prepared(inner) => Arc::make_mut(inner).set_retry_policy(boxed_retry_policy),
     }
@@ -280,7 +282,7 @@ pub unsafe extern "C" fn cass_statement_set_serial_consistency(
         _ => None,
     };
 
-    match &mut ptr_to_ref_mut(statement).statement {
+    match &mut BoxFFI::as_mut_ref(statement).statement {
         Statement::Simple(inner) => inner.query.set_serial_consistency(serial_consistency),
         Statement::Prepared(inner) => {
             Arc::make_mut(inner).set_serial_consistency(serial_consistency)
@@ -316,7 +318,7 @@ pub unsafe extern "C" fn cass_statement_set_timestamp(
     statement: *mut CassStatement,
     timestamp: cass_int64_t,
 ) -> CassError {
-    match &mut ptr_to_ref_mut(statement).statement {
+    match &mut BoxFFI::as_mut_ref(statement).statement {
         Statement::Simple(inner) => inner.query.set_timestamp(Some(timestamp)),
         Statement::Prepared(inner) => Arc::make_mut(inner).set_timestamp(Some(timestamp)),
     }
@@ -337,7 +339,7 @@ pub unsafe extern "C" fn cass_statement_set_request_timeout(
         return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     }
 
-    let statement_from_raw = ptr_to_ref_mut(statement);
+    let statement_from_raw = BoxFFI::as_mut_ref(statement);
     statement_from_raw.request_timeout_ms = Some(timeout_ms);
 
     CassError::CASS_OK

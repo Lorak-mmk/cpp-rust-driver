@@ -14,6 +14,8 @@ pub struct CassCollection {
     pub items: Vec<CqlValue>,
 }
 
+impl BoxFFI for CassCollection {}
+
 impl CassCollection {
     pub fn append_cql_value(&mut self, value: Option<CqlValue>) -> CassError {
         // FIXME: Bounds check, type check
@@ -61,7 +63,7 @@ pub unsafe extern "C" fn cass_collection_new(
         _ => item_count,
     } as usize;
 
-    Box::into_raw(Box::new(CassCollection {
+    BoxFFI::into_ptr(Box::new(CassCollection {
         collection_type,
         capacity,
         items: Vec::with_capacity(capacity),
@@ -70,7 +72,7 @@ pub unsafe extern "C" fn cass_collection_new(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_collection_free(collection: *mut CassCollection) {
-    free_boxed(collection);
+    BoxFFI::free(collection);
 }
 
 prepare_binders_macro!(@append CassCollection, |collection: &mut CassCollection, v| collection.append_cql_value(v));

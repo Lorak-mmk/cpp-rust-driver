@@ -5,32 +5,32 @@ use std::os::raw::c_char;
 use std::rc::Rc;
 use std::sync::Arc;
 
-pub unsafe fn ptr_to_ref<T>(ptr: *const T) -> &'static T {
-    ptr.as_ref().unwrap()
-}
+// pub unsafe fn ptr_to_ref<T>(ptr: *const T) -> &'static T {
+//     ptr.as_ref().unwrap()
+// }
 
-pub unsafe fn ptr_to_ref_mut<T>(ptr: *mut T) -> &'static mut T {
-    ptr.as_mut().unwrap()
-}
+// pub unsafe fn ptr_to_ref_mut<T>(ptr: *mut T) -> &'static mut T {
+//     ptr.as_mut().unwrap()
+// }
 
-pub unsafe fn free_boxed<T>(ptr: *mut T) {
-    if !ptr.is_null() {
-        // This takes the ownership of the boxed value and drops it
-        let _ = Box::from_raw(ptr);
-    }
-}
+// pub unsafe fn free_boxed<T>(ptr: *mut T) {
+//     if !ptr.is_null() {
+//         // This takes the ownership of the boxed value and drops it
+//         let _ = Box::from_raw(ptr);
+//     }
+// }
 
-pub unsafe fn clone_arced<T>(ptr: *const T) -> Arc<T> {
-    Arc::increment_strong_count(ptr);
-    Arc::from_raw(ptr)
-}
+// pub unsafe fn clone_arced<T>(ptr: *const T) -> Arc<T> {
+//     Arc::increment_strong_count(ptr);
+//     Arc::from_raw(ptr)
+// }
 
-pub unsafe fn free_arced<T>(ptr: *const T) {
-    if !ptr.is_null() {
-        // This decrements the arc's internal counter and potentially drops it
-        Arc::from_raw(ptr);
-    }
-}
+// pub unsafe fn free_arced<T>(ptr: *const T) {
+//     if !ptr.is_null() {
+//         // This decrements the arc's internal counter and potentially drops it
+//         Arc::from_raw(ptr);
+//     }
+// }
 
 pub unsafe fn ptr_to_cstr(ptr: *const c_char) -> Option<&'static str> {
     CStr::from_ptr(ptr).to_str().ok()
@@ -74,11 +74,6 @@ pub unsafe fn strlen(ptr: *const c_char) -> size_t {
     }
     libc::strlen(ptr) as size_t
 }
-
-pub trait ExternalBox {}
-pub trait ExternalArc {}
-pub trait ExternalRc {}
-pub trait ExternalRef {}
 
 pub trait BoxFFI {
     fn into_ptr(self: Box<Self>) -> *mut Self {
@@ -140,6 +135,9 @@ pub trait RcFFI {
 }
 
 pub trait RefFFI {
+    fn as_ptr(&self) -> *const Self {
+        self as *const Self
+    }
     unsafe fn as_ref<'a>(ptr: *const Self) -> &'a Self {
         ptr.as_ref().unwrap()
     }
@@ -147,11 +145,3 @@ pub trait RefFFI {
         ptr.as_mut().unwrap()
     }
 }
-
-impl<T: ExternalBox> BoxFFI for T {}
-
-impl<T: ExternalArc> ArcFFI for T {}
-
-impl<T: ExternalRc> RcFFI for T {}
-
-impl<T: ExternalRef> RefFFI for T {}
