@@ -93,7 +93,7 @@ pub fn build_session_builder(cluster: &CassCluster) -> SessionBuilder {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_cluster_new() -> *mut CassCluster {
+pub unsafe extern "C" fn cass_cluster_new() -> CassMutPtr<CassCluster> {
     BoxFFI::into_ptr(Box::new(CassCluster {
         session_builder: SessionBuilder::new()
             .retry_policy(Box::new(scylla::retry_policy::DefaultRetryPolicy)),
@@ -113,13 +113,13 @@ pub unsafe extern "C" fn cass_cluster_new() -> *mut CassCluster {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_cluster_free(cluster: *mut CassCluster) {
+pub unsafe extern "C" fn cass_cluster_free(cluster: CassMutPtr<CassCluster>) {
     BoxFFI::free(cluster);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_contact_points(
-    cluster: *mut CassCluster,
+    cluster: CassMutPtr<CassCluster>,
     contact_points: *const c_char,
 ) -> CassError {
     cass_cluster_set_contact_points_n(cluster, contact_points, strlen(contact_points))
@@ -127,7 +127,7 @@ pub unsafe extern "C" fn cass_cluster_set_contact_points(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_contact_points_n(
-    cluster: *mut CassCluster,
+    cluster: CassMutPtr<CassCluster>,
     contact_points: *const c_char,
     contact_points_length: size_t,
 ) -> CassError {
@@ -138,11 +138,11 @@ pub unsafe extern "C" fn cass_cluster_set_contact_points_n(
 }
 
 unsafe fn cluster_set_contact_points(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     contact_points_raw: *const c_char,
     contact_points_length: size_t,
 ) -> Result<(), CassError> {
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     let mut contact_points = ptr_to_cstr_n(contact_points_raw, contact_points_length)
         .ok_or(CassError::CASS_ERROR_LIB_BAD_PARAMS)?
         .split(',')
@@ -167,7 +167,7 @@ unsafe fn cluster_set_contact_points(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_use_randomized_contact_points(
-    _cluster_raw: *mut CassCluster,
+    _cluster_raw: CassMutPtr<CassCluster>,
     _enabled: cass_bool_t,
 ) -> CassError {
     // FIXME: should set `use_randomized_contact_points` flag in cluster config
@@ -177,48 +177,48 @@ pub unsafe extern "C" fn cass_cluster_set_use_randomized_contact_points(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_use_schema(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     enabled: cass_bool_t,
 ) {
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.session_builder.config.fetch_schema_metadata = enabled != 0;
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_tcp_nodelay(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     enabled: cass_bool_t,
 ) {
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.session_builder.config.tcp_nodelay = enabled != 0;
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_connect_timeout(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     timeout_ms: c_uint,
 ) {
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.session_builder.config.connect_timeout = Duration::from_millis(timeout_ms.into());
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_port(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     port: c_int,
 ) -> CassError {
     if port <= 0 {
         return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     }
 
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.port = port as u16;
     CassError::CASS_OK
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_credentials(
-    cluster: *mut CassCluster,
+    cluster: CassMutPtr<CassCluster>,
     username: *const c_char,
     password: *const c_char,
 ) {
@@ -233,7 +233,7 @@ pub unsafe extern "C" fn cass_cluster_set_credentials(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_credentials_n(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     username_raw: *const c_char,
     username_length: size_t,
     password_raw: *const c_char,
@@ -243,20 +243,22 @@ pub unsafe extern "C" fn cass_cluster_set_credentials_n(
     let username = ptr_to_cstr_n(username_raw, username_length).unwrap();
     let password = ptr_to_cstr_n(password_raw, password_length).unwrap();
 
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.auth_username = Some(username.to_string());
     cluster.auth_password = Some(password.to_string());
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_cluster_set_load_balance_round_robin(cluster_raw: *mut CassCluster) {
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+pub unsafe extern "C" fn cass_cluster_set_load_balance_round_robin(
+    cluster_raw: CassMutPtr<CassCluster>,
+) {
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.child_load_balancing_policy = CassClusterChildLoadBalancingPolicy::RoundRobinPolicy;
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_load_balance_dc_aware(
-    cluster: *mut CassCluster,
+    cluster: CassMutPtr<CassCluster>,
     local_dc: *const c_char,
     used_hosts_per_remote_dc: c_uint,
     allow_remote_dcs_for_local_cl: cass_bool_t,
@@ -272,7 +274,7 @@ pub unsafe extern "C" fn cass_cluster_set_load_balance_dc_aware(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_load_balance_dc_aware_n(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     local_dc_raw: *const c_char,
     local_dc_length: size_t,
     used_hosts_per_remote_dc: c_uint,
@@ -291,7 +293,7 @@ pub unsafe extern "C" fn cass_cluster_set_load_balance_dc_aware_n(
         .unwrap()
         .to_string();
 
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.child_load_balancing_policy =
         CassClusterChildLoadBalancingPolicy::DcAwareRoundRobinPolicy {
             local_dc,
@@ -303,7 +305,7 @@ pub unsafe extern "C" fn cass_cluster_set_load_balance_dc_aware_n(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_cloud_secure_connection_bundle_n(
-    _cluster_raw: *mut CassCluster,
+    _cluster_raw: CassMutPtr<CassCluster>,
     path: *const c_char,
     path_length: size_t,
 ) -> CassError {
@@ -319,7 +321,7 @@ pub unsafe extern "C" fn cass_cluster_set_cloud_secure_connection_bundle_n(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_exponential_reconnect(
-    _cluster_raw: *mut CassCluster,
+    _cluster_raw: CassMutPtr<CassCluster>,
     base_delay_ms: cass_uint64_t,
     max_delay_ms: cass_uint64_t,
 ) -> CassError {
@@ -347,14 +349,14 @@ pub unsafe extern "C" fn cass_cluster_set_exponential_reconnect(
 }
 
 #[no_mangle]
-pub extern "C" fn cass_custom_payload_new() -> *const CassCustomPayload {
+pub extern "C" fn cass_custom_payload_new() -> CassConstPtr<CassCustomPayload> {
     // FIXME: should create a new custom payload that must be freed
-    std::ptr::null()
+    CassConstPtr::null()
 }
 
 #[no_mangle]
 pub extern "C" fn cass_future_custom_payload_item(
-    _future: *mut CassFuture,
+    _future: CassMutPtr<CassFuture>,
     _i: size_t,
     _name: *const c_char,
     _name_length: size_t,
@@ -365,16 +367,16 @@ pub extern "C" fn cass_future_custom_payload_item(
 }
 
 #[no_mangle]
-pub extern "C" fn cass_future_custom_payload_item_count(_future: *mut CassFuture) -> size_t {
+pub extern "C" fn cass_future_custom_payload_item_count(_future: CassMutPtr<CassFuture>) -> size_t {
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_use_beta_protocol_version(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     enable: cass_bool_t,
 ) -> CassError {
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.use_beta_protocol_version = enable == cass_true;
 
     CassError::CASS_OK
@@ -382,10 +384,10 @@ pub unsafe extern "C" fn cass_cluster_set_use_beta_protocol_version(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_protocol_version(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     protocol_version: c_int,
 ) -> CassError {
-    let cluster = BoxFFI::as_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
 
     if protocol_version == 4 && !cluster.use_beta_protocol_version {
         // Rust Driver supports only protocol version 4
@@ -397,7 +399,7 @@ pub unsafe extern "C" fn cass_cluster_set_protocol_version(
 
 #[no_mangle]
 pub extern "C" fn cass_cluster_set_queue_size_event(
-    _cluster: *mut CassCluster,
+    _cluster: CassMutPtr<CassCluster>,
     _queue_size: c_uint,
 ) -> CassError {
     // In Cpp Driver this function is also a no-op...
@@ -406,7 +408,7 @@ pub extern "C" fn cass_cluster_set_queue_size_event(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_constant_speculative_execution_policy(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     constant_delay_ms: cass_int64_t,
     max_speculative_executions: c_int,
 ) -> CassError {
@@ -414,7 +416,7 @@ pub unsafe extern "C" fn cass_cluster_set_constant_speculative_execution_policy(
         return CassError::CASS_ERROR_LIB_BAD_PARAMS;
     }
 
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
 
     let policy = SimpleSpeculativeExecutionPolicy {
         max_retry_count: max_speculative_executions as usize,
@@ -428,9 +430,9 @@ pub unsafe extern "C" fn cass_cluster_set_constant_speculative_execution_policy(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_no_speculative_execution_policy(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
 ) -> CassError {
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.session_builder.config.speculative_execution_policy = None;
 
     CassError::CASS_OK
@@ -438,21 +440,21 @@ pub unsafe extern "C" fn cass_cluster_set_no_speculative_execution_policy(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_token_aware_routing(
-    cluster_raw: *mut CassCluster,
+    cluster_raw: CassMutPtr<CassCluster>,
     enabled: cass_bool_t,
 ) {
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
     cluster.token_aware_policy_enabled = enabled != 0;
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_retry_policy(
-    cluster_raw: *mut CassCluster,
-    retry_policy: *const CassRetryPolicy,
+    cluster_raw: CassMutPtr<CassCluster>,
+    retry_policy: CassConstPtr<CassRetryPolicy>,
 ) {
-    let cluster = BoxFFI::as_mut_ref(cluster_raw);
+    let cluster = BoxFFI::as_mut_ref(cluster_raw).unwrap();
 
-    let retry_policy: &dyn RetryPolicy = match ArcFFI::as_ref(retry_policy) {
+    let retry_policy: &dyn RetryPolicy = match ArcFFI::as_ref(retry_policy).unwrap() {
         DefaultRetryPolicy(default) => default,
         FallthroughRetryPolicy(fallthrough) => fallthrough,
         DowngradingConsistencyRetryPolicy(downgrading) => downgrading,
@@ -463,9 +465,12 @@ pub unsafe extern "C" fn cass_cluster_set_retry_policy(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_cluster_set_ssl(cluster: *mut CassCluster, ssl: *mut CassSsl) {
-    let cluster_from_raw = BoxFFI::as_mut_ref(cluster);
-    let cass_ssl = BoxFFI::as_ref(ssl);
+pub unsafe extern "C" fn cass_cluster_set_ssl(
+    cluster: CassMutPtr<CassCluster>,
+    ssl: CassMutPtr<CassSsl>,
+) {
+    let cluster_from_raw = BoxFFI::as_mut_ref(cluster).unwrap();
+    let cass_ssl = BoxFFI::as_mut_ref(ssl).unwrap();
 
     let ssl_context_builder = SslContextBuilder::from_ptr(cass_ssl.ssl_context);
     // Reference count is increased as tokio_openssl will try to free `ssl_context` when calling `SSL_free`.
@@ -476,10 +481,10 @@ pub unsafe extern "C" fn cass_cluster_set_ssl(cluster: *mut CassCluster, ssl: *m
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_cluster_set_compression(
-    cluster: *mut CassCluster,
+    cluster: CassMutPtr<CassCluster>,
     compression_type: CassCompressionType,
 ) {
-    let cluster_from_raw = BoxFFI::as_mut_ref(cluster);
+    let cluster_from_raw = BoxFFI::as_mut_ref(cluster).unwrap();
     let compression = match compression_type {
         CassCompressionType::CASS_COMPRESSION_LZ4 => Some(Compression::Lz4),
         CassCompressionType::CASS_COMPRESSION_SNAPPY => Some(Compression::Snappy),

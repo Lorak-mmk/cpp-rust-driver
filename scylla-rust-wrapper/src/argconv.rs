@@ -2,6 +2,7 @@ use crate::types::size_t;
 use std::cmp::min;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -48,90 +49,160 @@ pub unsafe fn strlen(ptr: *const c_char) -> size_t {
     libc::strlen(ptr) as size_t
 }
 
+#[repr(transparent)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub struct CassConstPtr<T: ?Sized> {
+    ptr: Option<NonNull<T>>,
+}
+
+impl<T: ?Sized> CassConstPtr<T> {
+    fn new(ptr: *const T) -> Self {
+        CassConstPtr {
+            ptr: NonNull::new(ptr as *mut T),
+        }
+    }
+
+    // Guarantee: for Some the pointer inside is non-null
+    fn into_raw_ptr(self) -> Option<*const T> {
+        self.ptr.map(|p| p.as_ptr() as *const T)
+    }
+
+    pub fn null() -> Self {
+        CassConstPtr { ptr: None }
+    }
+
+    pub fn is_null(self) -> bool {
+        self.ptr.is_none()
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub struct CassMutPtr<T: ?Sized> {
+    ptr: Option<NonNull<T>>,
+}
+
+impl<T: ?Sized> CassMutPtr<T> {
+    fn new(ptr: *mut T) -> Self {
+        CassMutPtr {
+            ptr: NonNull::new(ptr),
+        }
+    }
+
+    // Guarantee: for Some the pointer inside is non-null
+    fn into_raw_ptr(self) -> Option<*mut T> {
+        self.ptr.map(|p| p.as_ptr())
+    }
+
+    pub fn into_const(self) -> CassConstPtr<T> {
+        CassConstPtr { ptr: self.ptr }
+    }
+
+    pub fn null_mut() -> Self {
+        CassMutPtr { ptr: None }
+    }
+
+    pub fn is_null(self) -> bool {
+        self.ptr.is_none()
+    }
+}
+
 pub trait BoxFFI {
-    fn into_ptr(self: Box<Self>) -> *mut Self {
+    fn into_ptr(data: Box<Self>) -> CassMutPtr<Self> {
         #[allow(clippy::disallowed_methods)]
-        Box::into_raw(self)
+        CassMutPtr::new(Box::into_raw(data))
     }
-    unsafe fn from_ptr(ptr: *mut Self) -> Box<Self> {
+    unsafe fn from_ptr(ptr: CassMutPtr<Self>) -> Option<Box<Self>> {
         #[allow(clippy::disallowed_methods)]
-        Box::from_raw(ptr)
+        ptr.into_raw_ptr().map(|p| Box::from_raw(p))
     }
-    unsafe fn as_ref<'a>(ptr: *const Self) -> &'a Self {
+    unsafe fn as_ref<'a>(ptr: CassConstPtr<Self>) -> Option<&'a Self> {
         #[allow(clippy::disallowed_methods)]
-        ptr.as_ref().unwrap()
+        // SAFETY: CassConstPtr::into_raw_ptr guarantees the pointer is not null
+        ptr.into_raw_ptr().map(|p| p.as_ref().unwrap_unchecked())
     }
-    unsafe fn as_mut_ref<'a>(ptr: *mut Self) -> &'a mut Self {
+    unsafe fn as_mut_ref<'a>(ptr: CassMutPtr<Self>) -> Option<&'a mut Self> {
         #[allow(clippy::disallowed_methods)]
-        ptr.as_mut().unwrap()
+        // SAFETY: CassConstPtr::into_raw_ptr guarantees the pointer is not null
+        ptr.into_raw_ptr().map(|p| p.as_mut().unwrap_unchecked())
     }
-    unsafe fn free(ptr: *mut Self) {
+    unsafe fn free(ptr: CassMutPtr<Self>) {
         std::mem::drop(BoxFFI::from_ptr(ptr));
     }
 }
 
 pub trait ArcFFI {
-    fn as_ptr(self: &Arc<Self>) -> *const Self {
+    fn as_ptr(data: &Arc<Self>) -> CassConstPtr<Self> {
         #[allow(clippy::disallowed_methods)]
-        Arc::as_ptr(self)
+        CassConstPtr::new(Arc::as_ptr(data))
     }
-    fn into_ptr(self: Arc<Self>) -> *const Self {
+    fn into_ptr(data: Arc<Self>) -> CassConstPtr<Self> {
         #[allow(clippy::disallowed_methods)]
-        Arc::into_raw(self)
+        CassConstPtr::new(Arc::into_raw(data))
     }
-    unsafe fn from_ptr(ptr: *const Self) -> Arc<Self> {
+    unsafe fn from_ptr(ptr: CassConstPtr<Self>) -> Option<Arc<Self>> {
         #[allow(clippy::disallowed_methods)]
-        Arc::from_raw(ptr)
+        ptr.into_raw_ptr().map(|p| Arc::from_raw(p))
     }
-    unsafe fn cloned_from_ptr(ptr: *const Self) -> Arc<Self> {
+    unsafe fn cloned_from_ptr(ptr: CassConstPtr<Self>) -> Option<Arc<Self>> {
+        let ptr = ptr.into_raw_ptr()?;
         #[allow(clippy::disallowed_methods)]
         Arc::increment_strong_count(ptr);
         #[allow(clippy::disallowed_methods)]
-        Arc::from_raw(ptr)
+        Some(Arc::from_raw(ptr))
     }
-    unsafe fn as_ref<'a>(ptr: *const Self) -> &'a Self {
+    unsafe fn as_ref<'a>(ptr: CassConstPtr<Self>) -> Option<&'a Self> {
         #[allow(clippy::disallowed_methods)]
-        ptr.as_ref().unwrap()
+        // SAFETY: CassConstPtr::into_raw_ptr guarantees the pointer is not null
+        ptr.into_raw_ptr().map(|p| p.as_ref().unwrap_unchecked())
     }
-    unsafe fn free(ptr: *const Self) {
+    unsafe fn free(ptr: CassConstPtr<Self>) {
         std::mem::drop(ArcFFI::from_ptr(ptr));
     }
 }
 
 pub trait RcFFI {
-    fn into_ptr(self: Rc<Self>) -> *const Self {
+    fn as_ptr(data: &Rc<Self>) -> CassConstPtr<Self> {
         #[allow(clippy::disallowed_methods)]
-        Rc::into_raw(self)
+        CassConstPtr::new(Rc::as_ptr(data))
     }
-    unsafe fn from_ptr(ptr: *const Self) -> Rc<Self> {
+    fn into_ptr(data: Rc<Self>) -> CassConstPtr<Self> {
         #[allow(clippy::disallowed_methods)]
-        Rc::from_raw(ptr)
+        CassConstPtr::new(Rc::into_raw(data))
     }
-    unsafe fn cloned_from_ptr(ptr: *const Self) -> Rc<Self> {
+    unsafe fn from_ptr(ptr: CassConstPtr<Self>) -> Option<Rc<Self>> {
+        #[allow(clippy::disallowed_methods)]
+        ptr.into_raw_ptr().map(|p| Rc::from_raw(p))
+    }
+    unsafe fn cloned_from_ptr(ptr: CassConstPtr<Self>) -> Option<Rc<Self>> {
+        let ptr = ptr.into_raw_ptr()?;
         #[allow(clippy::disallowed_methods)]
         Rc::increment_strong_count(ptr);
         #[allow(clippy::disallowed_methods)]
-        Rc::from_raw(ptr)
+        Some(Rc::from_raw(ptr))
     }
-    unsafe fn as_ref<'a>(ptr: *const Self) -> &'a Self {
+    unsafe fn as_ref<'a>(ptr: CassConstPtr<Self>) -> Option<&'a Self> {
         #[allow(clippy::disallowed_methods)]
-        ptr.as_ref().unwrap()
+        // SAFETY: CassConstPtr::into_raw_ptr guarantees the pointer is not null
+        ptr.into_raw_ptr().map(|p| p.as_ref().unwrap_unchecked())
     }
-    unsafe fn free(ptr: *const Self) {
+    unsafe fn free(ptr: CassConstPtr<Self>) {
         std::mem::drop(RcFFI::from_ptr(ptr));
     }
 }
 
 pub trait RefFFI {
-    fn as_ptr(&self) -> *const Self {
-        self as *const Self
+    fn as_ptr(&self) -> CassConstPtr<Self> {
+        CassConstPtr::new(self as *const Self)
     }
-    unsafe fn as_ref<'a>(ptr: *const Self) -> &'a Self {
+    unsafe fn as_ref<'a>(ptr: CassConstPtr<Self>) -> Option<&'a Self> {
         #[allow(clippy::disallowed_methods)]
-        ptr.as_ref().unwrap()
+        // SAFETY: CassConstPtr::into_raw_ptr guarantees the pointer is not null
+        ptr.into_raw_ptr().map(|p| p.as_ref().unwrap_unchecked())
     }
-    unsafe fn as_mut_ref<'a>(ptr: *mut Self) -> &'a mut Self {
+    unsafe fn as_mut_ref<'a>(ptr: CassMutPtr<Self>) -> Option<&'a mut Self> {
         #[allow(clippy::disallowed_methods)]
-        ptr.as_mut().unwrap()
+        // SAFETY: CassConstPtr::into_raw_ptr guarantees the pointer is not null
+        ptr.into_raw_ptr().map(|p| p.as_mut().unwrap_unchecked())
     }
 }

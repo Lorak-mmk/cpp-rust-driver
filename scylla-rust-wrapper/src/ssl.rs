@@ -1,4 +1,5 @@
 use crate::argconv::BoxFFI;
+use crate::argconv::CassMutPtr;
 use crate::cass_error::CassError;
 use crate::types::size_t;
 use libc::{c_int, strlen};
@@ -26,13 +27,13 @@ pub const CASS_SSL_VERIFY_PEER_IDENTITY: i32 = 0x02;
 pub const CASS_SSL_VERIFY_PEER_IDENTITY_DNS: i32 = 0x04;
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_ssl_new() -> *const CassSsl {
+pub unsafe extern "C" fn cass_ssl_new() -> CassMutPtr<CassSsl> {
     openssl_sys::init();
     cass_ssl_new_no_lib_init()
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_ssl_new_no_lib_init() -> *const CassSsl {
+pub unsafe extern "C" fn cass_ssl_new_no_lib_init() -> CassMutPtr<CassSsl> {
     let ssl_context: *mut SSL_CTX = SSL_CTX_new(TLS_method());
     let trusted_store: *mut X509_STORE = X509_STORE_new();
 
@@ -44,7 +45,7 @@ pub unsafe extern "C" fn cass_ssl_new_no_lib_init() -> *const CassSsl {
         trusted_store,
     };
 
-    BoxFFI::into_ptr(Box::new(ssl)) as *const CassSsl
+    BoxFFI::into_ptr(Box::new(ssl))
 }
 
 impl Drop for CassSsl {
@@ -56,7 +57,7 @@ impl Drop for CassSsl {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_ssl_free(ssl: *mut CassSsl) {
+pub unsafe extern "C" fn cass_ssl_free(ssl: CassMutPtr<CassSsl>) {
     BoxFFI::free(ssl);
 }
 
@@ -88,7 +89,7 @@ unsafe extern "C" fn pem_password_callback(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_ssl_add_trusted_cert(
-    ssl: *mut CassSsl,
+    ssl: CassMutPtr<CassSsl>,
     cert: *const c_char,
 ) -> CassError {
     if cert.is_null() {
@@ -100,11 +101,11 @@ pub unsafe extern "C" fn cass_ssl_add_trusted_cert(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_ssl_add_trusted_cert_n(
-    ssl: *mut CassSsl,
+    ssl: CassMutPtr<CassSsl>,
     cert: *const c_char,
     cert_length: size_t,
 ) -> CassError {
-    let ssl = BoxFFI::as_mut_ref(ssl);
+    let ssl = BoxFFI::as_mut_ref(ssl).unwrap();
     let bio = BIO_new_mem_buf(cert as *const c_void, cert_length.try_into().unwrap());
 
     if bio.is_null() {
@@ -131,8 +132,8 @@ pub unsafe extern "C" fn cass_ssl_add_trusted_cert_n(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_ssl_set_verify_flags(ssl: *mut CassSsl, flags: i32) {
-    let ssl = BoxFFI::as_mut_ref(ssl);
+pub unsafe extern "C" fn cass_ssl_set_verify_flags(ssl: CassMutPtr<CassSsl>, flags: i32) {
+    let ssl = BoxFFI::as_mut_ref(ssl).unwrap();
 
     match flags {
         CASS_SSL_VERIFY_NONE => {
@@ -156,7 +157,10 @@ pub unsafe extern "C" fn cass_ssl_set_verify_flags(ssl: *mut CassSsl, flags: i32
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_ssl_set_cert(ssl: *mut CassSsl, cert: *const c_char) -> CassError {
+pub unsafe extern "C" fn cass_ssl_set_cert(
+    ssl: CassMutPtr<CassSsl>,
+    cert: *const c_char,
+) -> CassError {
     if cert.is_null() {
         return CassError::CASS_ERROR_SSL_INVALID_CERT;
     }
@@ -166,11 +170,11 @@ pub unsafe extern "C" fn cass_ssl_set_cert(ssl: *mut CassSsl, cert: *const c_cha
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_ssl_set_cert_n(
-    ssl: *mut CassSsl,
+    ssl: CassMutPtr<CassSsl>,
     cert: *const c_char,
     cert_length: size_t,
 ) -> CassError {
-    let ssl = BoxFFI::as_mut_ref(ssl);
+    let ssl = BoxFFI::as_mut_ref(ssl).unwrap();
     let bio = BIO_new_mem_buf(cert as *const c_void, cert_length.try_into().unwrap());
 
     if bio.is_null() {
@@ -238,7 +242,7 @@ unsafe extern "C" fn SSL_CTX_use_certificate_chain_bio(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_ssl_set_private_key(
-    ssl: *mut CassSsl,
+    ssl: CassMutPtr<CassSsl>,
     key: *const c_char,
     password: *mut c_char,
 ) -> CassError {
@@ -257,13 +261,13 @@ pub unsafe extern "C" fn cass_ssl_set_private_key(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_ssl_set_private_key_n(
-    ssl: *mut CassSsl,
+    ssl: CassMutPtr<CassSsl>,
     key: *const c_char,
     key_length: size_t,
     password: *mut c_char,
     _password_length: size_t,
 ) -> CassError {
-    let ssl = BoxFFI::as_mut_ref(ssl);
+    let ssl = BoxFFI::as_mut_ref(ssl).unwrap();
     let bio = BIO_new_mem_buf(key as *const c_void, key_length.try_into().unwrap());
 
     if bio.is_null() {

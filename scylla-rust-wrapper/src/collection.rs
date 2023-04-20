@@ -55,7 +55,7 @@ impl TryFrom<&CassCollection> for CqlValue {
 pub unsafe extern "C" fn cass_collection_new(
     collection_type: CassCollectionType,
     item_count: size_t,
-) -> *mut CassCollection {
+) -> CassMutPtr<CassCollection> {
     let capacity = match collection_type {
         // Maps consist of a key and a value, so twice
         // the number of CqlValue will be stored.
@@ -71,7 +71,7 @@ pub unsafe extern "C" fn cass_collection_new(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_collection_free(collection: *mut CassCollection) {
+pub unsafe extern "C" fn cass_collection_free(collection: CassMutPtr<CassCollection>) {
     BoxFFI::free(collection);
 }
 

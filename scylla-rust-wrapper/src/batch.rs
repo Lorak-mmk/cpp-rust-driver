@@ -1,4 +1,4 @@
-use crate::argconv::BoxFFI;
+use crate::argconv::{BoxFFI, CassConstPtr, CassMutPtr};
 use crate::cass_error::CassError;
 use crate::cass_types::CassConsistency;
 use crate::cass_types::{make_batch_type, CassBatchType};
@@ -24,7 +24,7 @@ pub struct CassBatchState {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_batch_new(type_: CassBatchType) -> *mut CassBatch {
+pub unsafe extern "C" fn cass_batch_new(type_: CassBatchType) -> CassMutPtr<CassBatch> {
     if let Some(batch_type) = make_batch_type(type_) {
         BoxFFI::into_ptr(Box::new(CassBatch {
             state: Arc::new(CassBatchState {
@@ -34,21 +34,21 @@ pub unsafe extern "C" fn cass_batch_new(type_: CassBatchType) -> *mut CassBatch 
             batch_request_timeout_ms: None,
         }))
     } else {
-        std::ptr::null_mut()
+        CassMutPtr::null_mut()
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_batch_free(batch: *mut CassBatch) {
+pub unsafe extern "C" fn cass_batch_free(batch: CassMutPtr<CassBatch>) {
     BoxFFI::free(batch);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_batch_set_consistency(
-    batch: *mut CassBatch,
+    batch: CassMutPtr<CassBatch>,
     consistency: CassConsistency,
 ) -> CassError {
-    let batch = BoxFFI::as_mut_ref(batch);
+    let batch = BoxFFI::as_mut_ref(batch).unwrap();
     let consistency = match consistency.try_into().ok() {
         Some(c) => c,
         None => return CassError::CASS_ERROR_LIB_BAD_PARAMS,
@@ -62,10 +62,10 @@ pub unsafe extern "C" fn cass_batch_set_consistency(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_batch_set_serial_consistency(
-    batch: *mut CassBatch,
+    batch: CassMutPtr<CassBatch>,
     serial_consistency: CassConsistency,
 ) -> CassError {
-    let batch = BoxFFI::as_mut_ref(batch);
+    let batch = BoxFFI::as_mut_ref(batch).unwrap();
     let serial_consistency = match serial_consistency.try_into().ok() {
         Some(c) => c,
         None => return CassError::CASS_ERROR_LIB_BAD_PARAMS,
@@ -79,10 +79,10 @@ pub unsafe extern "C" fn cass_batch_set_serial_consistency(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_batch_set_timestamp(
-    batch: *mut CassBatch,
+    batch: CassMutPtr<CassBatch>,
     timestamp: cass_int64_t,
 ) -> CassError {
-    let batch = BoxFFI::as_mut_ref(batch);
+    let batch = BoxFFI::as_mut_ref(batch).unwrap();
 
     Arc::make_mut(&mut batch.state)
         .batch
@@ -93,10 +93,10 @@ pub unsafe extern "C" fn cass_batch_set_timestamp(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_batch_set_request_timeout(
-    batch: *mut CassBatch,
+    batch: CassMutPtr<CassBatch>,
     timeout_ms: cass_uint64_t,
 ) -> CassError {
-    let batch = BoxFFI::as_mut_ref(batch);
+    let batch = BoxFFI::as_mut_ref(batch).unwrap();
     batch.batch_request_timeout_ms = Some(timeout_ms);
 
     CassError::CASS_OK
@@ -104,10 +104,10 @@ pub unsafe extern "C" fn cass_batch_set_request_timeout(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_batch_set_is_idempotent(
-    batch: *mut CassBatch,
+    batch: CassMutPtr<CassBatch>,
     is_idempotent: cass_bool_t,
 ) -> CassError {
-    let batch = BoxFFI::as_mut_ref(batch);
+    let batch = BoxFFI::as_mut_ref(batch).unwrap();
     Arc::make_mut(&mut batch.state)
         .batch
         .set_is_idempotent(is_idempotent != 0);
@@ -117,10 +117,10 @@ pub unsafe extern "C" fn cass_batch_set_is_idempotent(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_batch_set_tracing(
-    batch: *mut CassBatch,
+    batch: CassMutPtr<CassBatch>,
     enabled: cass_bool_t,
 ) -> CassError {
-    let batch = BoxFFI::as_mut_ref(batch);
+    let batch = BoxFFI::as_mut_ref(batch).unwrap();
     Arc::make_mut(&mut batch.state)
         .batch
         .set_tracing(enabled != 0);
@@ -130,12 +130,12 @@ pub unsafe extern "C" fn cass_batch_set_tracing(
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_batch_add_statement(
-    batch: *mut CassBatch,
-    statement: *const CassStatement,
+    batch: CassMutPtr<CassBatch>,
+    statement: CassConstPtr<CassStatement>,
 ) -> CassError {
-    let batch = BoxFFI::as_mut_ref(batch);
+    let batch = BoxFFI::as_mut_ref(batch).unwrap();
     let state = Arc::make_mut(&mut batch.state);
-    let statement = BoxFFI::as_ref(statement);
+    let statement = BoxFFI::as_ref(statement).unwrap();
 
     match &statement.statement {
         Statement::Simple(q) => state.batch.append_statement(q.query.clone()),

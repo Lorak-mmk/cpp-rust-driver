@@ -60,7 +60,7 @@ impl TryFrom<&CassTuple> for CqlValue {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_tuple_new(item_count: size_t) -> *mut CassTuple {
+pub unsafe extern "C" fn cass_tuple_new(item_count: size_t) -> CassMutPtr<CassTuple> {
     BoxFFI::into_ptr(Box::new(CassTuple {
         data_type: None,
         items: vec![None; item_count as usize],
@@ -69,12 +69,12 @@ pub unsafe extern "C" fn cass_tuple_new(item_count: size_t) -> *mut CassTuple {
 
 #[no_mangle]
 unsafe extern "C" fn cass_tuple_new_from_data_type(
-    data_type: *const CassDataType,
-) -> *mut CassTuple {
-    let data_type = ArcFFI::cloned_from_ptr(data_type);
+    data_type: CassConstPtr<CassDataType>,
+) -> CassMutPtr<CassTuple> {
+    let data_type = ArcFFI::cloned_from_ptr(data_type).unwrap();
     let item_count = match data_type.get_unchecked() {
         CassDataTypeInner::Tuple(v) => v.len(),
-        _ => return std::ptr::null_mut(),
+        _ => return CassMutPtr::null_mut(),
     };
     BoxFFI::into_ptr(Box::new(CassTuple {
         data_type: Some(data_type),
@@ -83,13 +83,15 @@ unsafe extern "C" fn cass_tuple_new_from_data_type(
 }
 
 #[no_mangle]
-unsafe extern "C" fn cass_tuple_free(tuple: *mut CassTuple) {
+unsafe extern "C" fn cass_tuple_free(tuple: CassMutPtr<CassTuple>) {
     BoxFFI::free(tuple);
 }
 
 #[no_mangle]
-unsafe extern "C" fn cass_tuple_data_type(tuple: *const CassTuple) -> *const CassDataType {
-    match &BoxFFI::as_ref(tuple).data_type {
+unsafe extern "C" fn cass_tuple_data_type(
+    tuple: CassConstPtr<CassTuple>,
+) -> CassConstPtr<CassDataType> {
+    match &BoxFFI::as_ref(tuple).unwrap().data_type {
         Some(t) => ArcFFI::as_ptr(t),
         None => &EMPTY_TUPLE_TYPE,
     }

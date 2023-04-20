@@ -26,7 +26,7 @@ type CassFutureError = (CassError, String);
 pub type CassFutureResult = Result<CassResultValue, CassFutureError>;
 
 pub type CassFutureCallback =
-    Option<unsafe extern "C" fn(future: *const CassFuture, data: *mut c_void)>;
+    Option<unsafe extern "C" fn(future: CassConstPtr<CassFuture>, data: *mut c_void)>;
 
 struct BoundCallback {
     pub cb: CassFutureCallback,
@@ -38,9 +38,9 @@ struct BoundCallback {
 unsafe impl Send for BoundCallback {}
 
 impl BoundCallback {
-    fn invoke(self, fut: &CassFuture) {
+    fn invoke(self, fut: &Arc<CassFuture>) {
         unsafe {
-            self.cb.unwrap()(fut as *const CassFuture, self.data);
+            self.cb.unwrap()(ArcFFI::as_ptr(fut), self.data);
         }
     }
 }
@@ -63,8 +63,8 @@ impl ArcFFI for CassFuture {}
 impl CassFuture {
     pub fn make_raw(
         fut: impl Future<Output = CassFutureResult> + Send + 'static,
-    ) -> *mut CassFuture {
-        Self::new_from_future(fut).into_raw() as *mut _
+    ) -> CassConstPtr<CassFuture> {
+        Self::new_from_future(fut).into_raw()
     }
 
     pub fn new_from_future(
@@ -84,7 +84,7 @@ impl CassFuture {
                 guard.callback.take()
             };
             if let Some(bound_cb) = maybe_cb {
-                bound_cb.invoke(cass_fut_clone.as_ref());
+                bound_cb.invoke(&cass_fut_clone);
             }
 
             cass_fut_clone.wait_for_value.notify_all();
@@ -126,7 +126,7 @@ impl CassFuture {
         f(&mut guard)
     }
 
-    pub fn set_callback(&self, cb: CassFutureCallback, data: *mut c_void) -> CassError {
+    pub fn set_callback(self: &Arc<Self>, cb: CassFutureCallback, data: *mut c_void) -> CassError {
         let mut lock = self.state.lock().unwrap();
         if lock.callback.is_some() {
             // Another callback has been already set
@@ -144,7 +144,7 @@ impl CassFuture {
         CassError::CASS_OK
     }
 
-    fn into_raw(self: Arc<Self>) -> *const Self {
+    fn into_raw(self: Arc<Self>) -> CassConstPtr<Self> {
         ArcFFI::into_ptr(self)
     }
 }
@@ -154,21 +154,25 @@ impl CheckSendSync for CassFuture {}
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_future_set_callback(
-    future_raw: *const CassFuture,
+    future_raw: CassConstPtr<CassFuture>,
     callback: CassFutureCallback,
     data: *mut ::std::os::raw::c_void,
 ) -> CassError {
-    ArcFFI::as_ref(future_raw).set_callback(callback, data)
+    ArcFFI::cloned_from_ptr(future_raw)
+        .unwrap()
+        .set_callback(callback, data)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_future_wait(future_raw: *const CassFuture) {
-    ArcFFI::as_ref(future_raw).with_waited_result(|_| ());
+pub unsafe extern "C" fn cass_future_wait(future_raw: CassConstPtr<CassFuture>) {
+    ArcFFI::as_ref(future_raw)
+        .unwrap()
+        .with_waited_result(|_| ());
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_future_ready(future_raw: *const CassFuture) -> cass_bool_t {
-    let state_guard = ArcFFI::as_ref(future_raw).state.lock().unwrap();
+pub unsafe extern "C" fn cass_future_ready(future_raw: CassConstPtr<CassFuture>) -> cass_bool_t {
+    let state_guard = ArcFFI::as_ref(future_raw).unwrap().state.lock().unwrap();
     match state_guard.value {
         None => cass_false,
         Some(_) => cass_true,
@@ -176,95 +180,104 @@ pub unsafe extern "C" fn cass_future_ready(future_raw: *const CassFuture) -> cas
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_future_error_code(future_raw: *const CassFuture) -> CassError {
-    ArcFFI::as_ref(future_raw).with_waited_result(|r: &mut CassFutureResult| match r {
-        Ok(CassResultValue::QueryError(err)) => CassError::from(err.as_ref()),
-        Err((err, _)) => *err,
-        _ => CassError::CASS_OK,
-    })
+pub unsafe extern "C" fn cass_future_error_code(future_raw: CassConstPtr<CassFuture>) -> CassError {
+    ArcFFI::as_ref(future_raw)
+        .unwrap()
+        .with_waited_result(|r: &mut CassFutureResult| match r {
+            Ok(CassResultValue::QueryError(err)) => CassError::from(err.as_ref()),
+            Err((err, _)) => *err,
+            _ => CassError::CASS_OK,
+        })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_future_error_message(
-    future: *mut CassFuture,
+    future: CassConstPtr<CassFuture>,
     message: *mut *const ::std::os::raw::c_char,
     message_length: *mut size_t,
 ) {
-    ArcFFI::as_ref(future).with_waited_state(|state: &mut CassFutureState| {
-        let value = &state.value;
-        let msg = state
-            .err_string
-            .get_or_insert_with(|| match value.as_ref().unwrap() {
-                Ok(CassResultValue::QueryError(err)) => err.msg(),
-                Err((_, s)) => s.msg(),
-                _ => "".to_string(),
-            });
-        write_str_to_c(msg.as_str(), message, message_length);
-    });
+    ArcFFI::as_ref(future)
+        .unwrap()
+        .with_waited_state(|state: &mut CassFutureState| {
+            let value = &state.value;
+            let msg = state
+                .err_string
+                .get_or_insert_with(|| match value.as_ref().unwrap() {
+                    Ok(CassResultValue::QueryError(err)) => err.msg(),
+                    Err((_, s)) => s.msg(),
+                    _ => "".to_string(),
+                });
+            write_str_to_c(msg.as_str(), message, message_length);
+        });
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_future_free(future_raw: *const CassFuture) {
+pub unsafe extern "C" fn cass_future_free(future_raw: CassConstPtr<CassFuture>) {
     ArcFFI::free(future_raw);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_future_get_result(
-    future_raw: *const CassFuture,
-) -> *const CassResult {
+    future_raw: CassConstPtr<CassFuture>,
+) -> CassConstPtr<CassResult> {
     ArcFFI::as_ref(future_raw)
+        .unwrap()
         .with_waited_result(|r: &mut CassFutureResult| -> Option<Arc<CassResult>> {
             match r.as_ref().ok()? {
                 CassResultValue::QueryResult(qr) => Some(qr.clone()),
                 _ => None,
             }
         })
-        .map_or(std::ptr::null(), ArcFFI::into_ptr)
+        .map_or(CassConstPtr::null(), ArcFFI::into_ptr)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_future_get_error_result(
-    future_raw: *const CassFuture,
-) -> *const CassErrorResult {
+    future_raw: CassConstPtr<CassFuture>,
+) -> CassConstPtr<CassErrorResult> {
     ArcFFI::as_ref(future_raw)
+        .unwrap()
         .with_waited_result(|r: &mut CassFutureResult| -> Option<Arc<CassErrorResult>> {
             match r.as_ref().ok()? {
                 CassResultValue::QueryError(qr) => Some(qr.clone()),
                 _ => None,
             }
         })
-        .map_or(std::ptr::null(), ArcFFI::into_ptr)
+        .map_or(CassConstPtr::null(), ArcFFI::into_ptr)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_future_get_prepared(
-    future_raw: *mut CassFuture,
-) -> *const CassPrepared {
+    future_raw: CassConstPtr<CassFuture>,
+) -> CassConstPtr<CassPrepared> {
     ArcFFI::as_ref(future_raw)
+        .unwrap()
         .with_waited_result(|r: &mut CassFutureResult| -> Option<Arc<CassPrepared>> {
             match r.as_ref().ok()? {
                 CassResultValue::Prepared(p) => Some(p.clone()),
                 _ => None,
             }
         })
-        .map_or(std::ptr::null(), ArcFFI::into_ptr)
+        .map_or(CassConstPtr::null(), ArcFFI::into_ptr)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_future_tracing_id(
-    future: *const CassFuture,
+    future: CassConstPtr<CassFuture>,
     tracing_id: *mut CassUuid,
 ) -> CassError {
-    ArcFFI::as_ref(future).with_waited_result(|r: &mut CassFutureResult| match r {
-        Ok(CassResultValue::QueryResult(result)) => match result.metadata.tracing_id {
-            Some(id) => {
-                *tracing_id = CassUuid::from(id);
-                CassError::CASS_OK
-            }
-            None => CassError::CASS_ERROR_LIB_NO_TRACING_ID,
-        },
-        _ => CassError::CASS_ERROR_LIB_INVALID_FUTURE_TYPE,
-    })
+    ArcFFI::as_ref(future)
+        .unwrap()
+        .with_waited_result(|r: &mut CassFutureResult| match r {
+            Ok(CassResultValue::QueryResult(result)) => match result.metadata.tracing_id {
+                Some(id) => {
+                    *tracing_id = CassUuid::from(id);
+                    CassError::CASS_OK
+                }
+                None => CassError::CASS_ERROR_LIB_NO_TRACING_ID,
+            },
+            _ => CassError::CASS_ERROR_LIB_INVALID_FUTURE_TYPE,
+        })
 }
 
 #[cfg(test)]
@@ -285,7 +298,7 @@ mod tests {
         };
         let cass_fut = CassFuture::make_raw(fut);
 
-        struct PtrWrapper(*mut CassFuture);
+        struct PtrWrapper(CassConstPtr<CassFuture>);
         unsafe impl Send for PtrWrapper {}
         let wrapped_cass_fut = PtrWrapper(cass_fut);
         unsafe {

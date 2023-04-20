@@ -12,15 +12,15 @@ pub type CassPrepared = PreparedStatement;
 impl ArcFFI for CassPrepared {}
 
 #[no_mangle]
-pub unsafe extern "C" fn cass_prepared_free(prepared_raw: *const CassPrepared) {
+pub unsafe extern "C" fn cass_prepared_free(prepared_raw: CassConstPtr<CassPrepared>) {
     ArcFFI::free(prepared_raw);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cass_prepared_bind(
-    prepared_raw: *const CassPrepared,
-) -> *mut CassStatement {
-    let prepared: Arc<_> = ArcFFI::cloned_from_ptr(prepared_raw);
+    prepared_raw: CassConstPtr<CassPrepared>,
+) -> CassMutPtr<CassStatement> {
+    let prepared: Arc<_> = ArcFFI::cloned_from_ptr(prepared_raw).unwrap();
     let bound_values_size = prepared.get_prepared_metadata().col_count;
 
     // cloning prepared statement's arc, because creating CassStatement should not invalidate
