@@ -158,6 +158,7 @@ CassError select_from_basic(CassSession* session, const char* key, Basic* basic)
 }
 
 int main(int argc, char* argv[]) {
+  cass_log_set_level(CASS_LOG_TRACE);
   CassCluster* cluster = NULL;
   CassSession* session = cass_session_new();
   char* hosts = "127.0.0.1";

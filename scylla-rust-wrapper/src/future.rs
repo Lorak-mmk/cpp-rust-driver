@@ -147,6 +147,7 @@ impl CassFuture {
     }
 }
 
+#[allow(unused)]
 trait CheckSendSync: Send + Sync {}
 impl CheckSendSync for CassFuture {}
 
