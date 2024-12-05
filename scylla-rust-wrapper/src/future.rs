@@ -386,7 +386,7 @@ pub unsafe extern "C" fn cass_future_get_prepared(
     ptr_to_ref(future_raw)
         .with_waited_result(|r: &mut CassFutureResult| -> Option<Arc<CassPrepared>> {
             match r.as_ref().ok()? {
-                CassResultValue::Prepared(p) => Some(p.clone()),
+                CassResultValue::Prepared(p) => Some(Arc::clone(p)),
                 _ => None,
             }
         })

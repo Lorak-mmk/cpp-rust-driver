@@ -279,9 +279,9 @@ pub unsafe extern "C" fn cass_session_execute(
 
         match &mut statement {
             BoundStatement::Simple(query) => query.query.set_execution_profile_handle(handle),
-            BoundStatement::Prepared(prepared) => Arc::make_mut(&mut prepared.statement)
-                .statement
-                .set_execution_profile_handle(handle),
+            BoundStatement::Prepared(prepared) => {
+                prepared.statement.set_execution_profile_handle(handle)
+            }
         }
 
         // Creating a type alias here to fix clippy lints.
@@ -330,12 +330,12 @@ pub unsafe extern "C" fn cass_session_execute(
             BoundStatement::Prepared(prepared) => {
                 // Clone result metadata, so we don't need to construct it from scratch in
                 // `CassResultMetadata::from_column_specs` - it requires a lot of allocations for complex types.
-                let maybe_result_metadata = Some(Arc::clone(&prepared.statement.result_metadata));
+                let maybe_result_metadata = Some(Arc::clone(&prepared.result_metadata));
 
                 if paging_enabled {
                     session
                         .execute_single_page(
-                            &prepared.statement.statement,
+                            &prepared.statement,
                             prepared.bound_values,
                             paging_state,
                         )
@@ -343,7 +343,7 @@ pub unsafe extern "C" fn cass_session_execute(
                         .map(|(qr, psr)| (qr, psr, maybe_result_metadata))
                 } else {
                     session
-                        .execute_unpaged(&prepared.statement.statement, prepared.bound_values)
+                        .execute_unpaged(&prepared.statement, prepared.bound_values)
                         .await
                         .map(|result| {
                             (
@@ -392,7 +392,7 @@ pub unsafe extern "C" fn cass_session_prepare_from_existing(
         let query = match &statement {
             BoundStatement::Simple(q) => q,
             BoundStatement::Prepared(ps) => {
-                return Ok(CassResultValue::Prepared(ps.statement.clone()));
+                return Ok(CassResultValue::Prepared(Arc::new(ps.to_cass_prepared())));
             }
         };
 

@@ -1,8 +1,8 @@
 use crate::cass_error::CassError;
-use crate::cass_types::CassConsistency;
+use crate::cass_types::{CassConsistency, CassDataType};
 use crate::exec_profile::PerStatementExecProfile;
 use crate::prepared::CassPrepared;
-use crate::query_result::CassResult;
+use crate::query_result::{CassResult, CassResultMetadata};
 use crate::retry_policy::CassRetryPolicy;
 use crate::types::*;
 use crate::value::CassCqlValue;
@@ -10,6 +10,7 @@ use crate::{argconv::*, value};
 use scylla::frame::types::Consistency;
 use scylla::frame::value::MaybeUnset;
 use scylla::frame::value::MaybeUnset::{Set, Unset};
+use scylla::prepared_statement::PreparedStatement;
 use scylla::query::Query;
 use scylla::serialize::row::{RowSerializationContext, SerializeRow};
 use scylla::serialize::value::SerializeValue;
@@ -32,17 +33,45 @@ pub enum BoundStatement {
 }
 
 #[derive(Clone)]
-pub struct BoundPreparedStatement {
-    // Arc is needed, because PreparedStatement is passed by reference to session.execute
-    pub statement: Arc<CassPrepared>,
-    pub bound_values: Vec<MaybeUnset<Option<CassCqlValue>>>,
+pub struct TypedBoundValues {
+    variable_col_data_types: Arc<Vec<Arc<CassDataType>>>,
+    pub values: Vec<MaybeUnset<Option<CassCqlValue>>>,
 }
 
-impl BoundPreparedStatement {
+impl SerializeRow for TypedBoundValues {
+    fn serialize(
+        &self,
+        ctx: &RowSerializationContext<'_>,
+        writer: &mut RowWriter,
+    ) -> Result<(), SerializationError> {
+        SerializeRow::serialize(&self.values, ctx, writer)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
+
+impl TypedBoundValues {
+    pub fn new(types: &Arc<Vec<Arc<CassDataType>>>, size: usize) -> Self {
+        Self {
+            variable_col_data_types: Arc::clone(types),
+            values: vec![Unset; size],
+        }
+    }
+
+    fn clear(&mut self) {
+        self.values.clear();
+    }
+
+    fn resize(&mut self, size: usize) {
+        self.values.resize(size, Unset)
+    }
+
     fn bind_cql_value(&mut self, index: usize, value: Option<CassCqlValue>) -> CassError {
         match (
-            self.bound_values.get_mut(index),
-            self.statement.variable_col_data_types.get(index),
+            self.values.get_mut(index),
+            self.variable_col_data_types.get(index),
         ) {
             (Some(v), Some(dt)) => {
                 // Perform the typecheck.
@@ -63,14 +92,46 @@ impl BoundPreparedStatement {
         }
     }
 
+    fn bind_multiple_values(
+        &mut self,
+        indices: impl Iterator<Item = usize>,
+        value: Option<CassCqlValue>,
+    ) -> CassError {
+        let mut had_element = false;
+        for i in indices {
+            had_element = true;
+            let bind_status = self.bind_cql_value(i, value.clone());
+
+            if bind_status != CassError::CASS_OK {
+                return bind_status;
+            }
+        }
+
+        if !had_element {
+            return CassError::CASS_ERROR_LIB_NAME_DOES_NOT_EXIST;
+        }
+
+        CassError::CASS_OK
+    }
+}
+
+#[derive(Clone)]
+pub struct BoundPreparedStatement {
+    // Cached result metadata. Arc'ed since we want to share it
+    // with result metadata after execution.
+    pub result_metadata: Arc<CassResultMetadata>,
+    pub statement: PreparedStatement,
+    pub bound_values: TypedBoundValues,
+}
+
+impl BoundPreparedStatement {
     fn bind_cql_value_by_name(
         &mut self,
         name: &str,
         is_case_sensitive: bool,
         value: Option<CassCqlValue>,
     ) -> CassError {
-        let indices: Vec<usize> = self
-            .statement
+        let indices = self
             .statement
             .get_variable_col_specs()
             .iter()
@@ -79,30 +140,17 @@ impl BoundPreparedStatement {
                 is_case_sensitive && col.name() == name
                     || !is_case_sensitive && col.name().eq_ignore_ascii_case(name)
             })
-            .map(|(i, _)| i)
-            .collect();
+            .map(|(i, _)| i);
 
-        if indices.is_empty() {
-            return CassError::CASS_ERROR_LIB_NAME_DOES_NOT_EXIST;
-        }
-
-        self.bind_multiple_values_by_name(&indices, value)
+        self.bound_values.bind_multiple_values(indices, value)
     }
 
-    fn bind_multiple_values_by_name(
-        &mut self,
-        indices: &[usize],
-        value: Option<CassCqlValue>,
-    ) -> CassError {
-        for i in indices {
-            let bind_status = self.bind_cql_value(*i, value.clone());
-
-            if bind_status != CassError::CASS_OK {
-                return bind_status;
-            }
+    pub(crate) fn to_cass_prepared(&self) -> CassPrepared {
+        CassPrepared {
+            variable_col_data_types: Arc::clone(&self.bound_values.variable_col_data_types),
+            result_metadata: Arc::clone(&self.result_metadata),
+            statement: self.statement.clone(),
         }
-
-        CassError::CASS_OK
     }
 }
 
@@ -215,7 +263,9 @@ impl CassStatement {
     fn bind_cql_value(&mut self, index: usize, value: Option<CassCqlValue>) -> CassError {
         match &mut self.statement {
             BoundStatement::Simple(simple) => simple.bind_cql_value(index, value),
-            BoundStatement::Prepared(prepared) => prepared.bind_cql_value(index, value),
+            BoundStatement::Prepared(prepared) => {
+                prepared.bound_values.bind_cql_value(index, value)
+            }
         }
     }
 
@@ -245,7 +295,7 @@ impl CassStatement {
             }
             BoundStatement::Prepared(prepared) => {
                 prepared.bound_values.clear();
-                prepared.bound_values.resize(count, Unset);
+                prepared.bound_values.resize(count);
             }
         }
     }
@@ -303,9 +353,7 @@ pub unsafe extern "C" fn cass_statement_set_consistency(
     if let Some(consistency) = consistency_opt {
         match &mut ptr_to_ref_mut(statement).statement {
             BoundStatement::Simple(inner) => inner.query.set_consistency(consistency),
-            BoundStatement::Prepared(inner) => Arc::make_mut(&mut inner.statement)
-                .statement
-                .set_consistency(consistency),
+            BoundStatement::Prepared(inner) => inner.statement.set_consistency(consistency),
         }
     }
 
@@ -325,9 +373,7 @@ pub unsafe extern "C" fn cass_statement_set_paging_size(
         statement.paging_enabled = true;
         match &mut statement.statement {
             BoundStatement::Simple(inner) => inner.query.set_page_size(page_size),
-            BoundStatement::Prepared(inner) => Arc::make_mut(&mut inner.statement)
-                .statement
-                .set_page_size(page_size),
+            BoundStatement::Prepared(inner) => inner.statement.set_page_size(page_size),
         }
     }
 
@@ -375,9 +421,7 @@ pub unsafe extern "C" fn cass_statement_set_is_idempotent(
 ) -> CassError {
     match &mut ptr_to_ref_mut(statement_raw).statement {
         BoundStatement::Simple(inner) => inner.query.set_is_idempotent(is_idempotent != 0),
-        BoundStatement::Prepared(inner) => Arc::make_mut(&mut inner.statement)
-            .statement
-            .set_is_idempotent(is_idempotent != 0),
+        BoundStatement::Prepared(inner) => inner.statement.set_is_idempotent(is_idempotent != 0),
     }
 
     CassError::CASS_OK
@@ -390,9 +434,7 @@ pub unsafe extern "C" fn cass_statement_set_tracing(
 ) -> CassError {
     match &mut ptr_to_ref_mut(statement_raw).statement {
         BoundStatement::Simple(inner) => inner.query.set_tracing(enabled != 0),
-        BoundStatement::Prepared(inner) => Arc::make_mut(&mut inner.statement)
-            .statement
-            .set_tracing(enabled != 0),
+        BoundStatement::Prepared(inner) => inner.statement.set_tracing(enabled != 0),
     }
 
     CassError::CASS_OK
@@ -414,9 +456,9 @@ pub unsafe extern "C" fn cass_statement_set_retry_policy(
 
     match &mut ptr_to_ref_mut(statement).statement {
         BoundStatement::Simple(inner) => inner.query.set_retry_policy(maybe_arced_retry_policy),
-        BoundStatement::Prepared(inner) => Arc::make_mut(&mut inner.statement)
-            .statement
-            .set_retry_policy(maybe_arced_retry_policy),
+        BoundStatement::Prepared(inner) => {
+            inner.statement.set_retry_policy(maybe_arced_retry_policy)
+        }
     }
 
     CassError::CASS_OK
@@ -443,9 +485,9 @@ pub unsafe extern "C" fn cass_statement_set_serial_consistency(
 
     match &mut ptr_to_ref_mut(statement).statement {
         BoundStatement::Simple(inner) => inner.query.set_serial_consistency(Some(consistency)),
-        BoundStatement::Prepared(inner) => Arc::make_mut(&mut inner.statement)
-            .statement
-            .set_serial_consistency(Some(consistency)),
+        BoundStatement::Prepared(inner) => {
+            inner.statement.set_serial_consistency(Some(consistency))
+        }
     }
 
     CassError::CASS_OK
@@ -475,9 +517,7 @@ pub unsafe extern "C" fn cass_statement_set_timestamp(
 ) -> CassError {
     match &mut ptr_to_ref_mut(statement).statement {
         BoundStatement::Simple(inner) => inner.query.set_timestamp(Some(timestamp)),
-        BoundStatement::Prepared(inner) => Arc::make_mut(&mut inner.statement)
-            .statement
-            .set_timestamp(Some(timestamp)),
+        BoundStatement::Prepared(inner) => inner.statement.set_timestamp(Some(timestamp)),
     }
 
     CassError::CASS_OK

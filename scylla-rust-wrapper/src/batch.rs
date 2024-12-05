@@ -169,8 +169,8 @@ pub unsafe extern "C" fn cass_batch_add_statement(
             state.bound_values.push(q.bound_values.clone());
         }
         BoundStatement::Prepared(p) => {
-            state.batch.append_statement(p.statement.statement.clone());
-            state.bound_values.push(p.bound_values.clone());
+            state.batch.append_statement(p.statement.clone());
+            state.bound_values.push(p.bound_values.values.clone());
         }
     };
 

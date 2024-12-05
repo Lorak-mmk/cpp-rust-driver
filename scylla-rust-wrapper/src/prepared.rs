@@ -1,4 +1,4 @@
-use scylla::{frame::value::MaybeUnset::Unset, transport::PagingState};
+use scylla::transport::PagingState;
 use std::{os::raw::c_char, sync::Arc};
 
 use crate::{
@@ -6,7 +6,7 @@ use crate::{
     cass_error::CassError,
     cass_types::{get_column_type, CassDataType},
     query_result::CassResultMetadata,
-    statement::{BoundPreparedStatement, BoundStatement, CassStatement},
+    statement::{BoundPreparedStatement, BoundStatement, CassStatement, TypedBoundValues},
     types::size_t,
 };
 use scylla::prepared_statement::PreparedStatement;
@@ -14,7 +14,7 @@ use scylla::prepared_statement::PreparedStatement;
 #[derive(Debug, Clone)]
 pub struct CassPrepared {
     // Data types of columns from PreparedMetadata.
-    pub variable_col_data_types: Vec<Arc<CassDataType>>,
+    pub variable_col_data_types: Arc<Vec<Arc<CassDataType>>>,
 
     // Cached result metadata. Arc'ed since we want to share it
     // with result metadata after execution.
@@ -34,11 +34,13 @@ impl CassPrepared {
         // won't support it in the near future.
         statement.set_use_cached_result_metadata(true);
 
-        let variable_col_data_types = statement
-            .get_variable_col_specs()
-            .iter()
-            .map(|col_spec| Arc::new(get_column_type(col_spec.typ())))
-            .collect();
+        let variable_col_data_types = Arc::new(
+            statement
+                .get_variable_col_specs()
+                .iter()
+                .map(|col_spec| Arc::new(get_column_type(col_spec.typ())))
+                .collect(),
+        );
 
         let result_metadata = Arc::new(CassResultMetadata::from_column_specs(
             statement.get_result_set_col_specs(),
@@ -81,15 +83,16 @@ pub unsafe extern "C" fn cass_prepared_free(prepared_raw: *const CassPrepared) {
 pub unsafe extern "C" fn cass_prepared_bind(
     prepared_raw: *const CassPrepared,
 ) -> *mut CassStatement {
-    let prepared: Arc<_> = clone_arced(prepared_raw);
+    let prepared: &CassPrepared = ptr_to_ref(prepared_raw);
     let bound_values_size = prepared.statement.get_variable_col_specs().len();
 
     // cloning prepared statement's arc, because creating CassStatement should not invalidate
     // the CassPrepared argument
 
     let statement = BoundStatement::Prepared(BoundPreparedStatement {
-        statement: prepared,
-        bound_values: vec![Unset; bound_values_size],
+        statement: prepared.statement.clone(),
+        bound_values: TypedBoundValues::new(&prepared.variable_col_data_types, bound_values_size),
+        result_metadata: Arc::clone(&prepared.result_metadata),
     });
 
     Box::into_raw(Box::new(CassStatement {
